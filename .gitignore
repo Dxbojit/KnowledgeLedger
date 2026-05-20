@@ -1,0 +1,36 @@
+# Environment variables
+.env
+*.env
+
+# Python caching & environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE / Editor config
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# NextJS / Frontend node_modules & logs
+**/node_modules/
+**/.next/
+**/*.log
+**/.env*.local
+**/.vercel
+
+# OS files
+.DS_Store
+Thumbs.db

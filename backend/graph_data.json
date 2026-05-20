@@ -1,0 +1,167 @@
+{
+  "nodes": [
+    {
+      "id": "auth-service",
+      "label": "Auth Service",
+      "type": "service",
+      "risk_score": 150,
+      "latest_incident": "Auth Token Failure",
+      "incidents": [
+        {
+          "title": "Auth Token Failure",
+          "severity": "MEDIUM"
+        },
+        {
+          "title": "Auth Token Failure",
+          "severity": "MEDIUM"
+        },
+        {
+          "title": "Auth Token Failure",
+          "severity": "MEDIUM"
+        },
+        {
+          "title": "Auth Token Failure",
+          "severity": "MEDIUM"
+        },
+        {
+          "title": "Auth Token Failure",
+          "severity": "MEDIUM"
+        }
+      ]
+    },
+    {
+      "id": "project-atlas",
+      "label": "Project Atlas",
+      "type": "project",
+      "risk_score": 0
+    },
+    {
+      "id": "infra-team",
+      "label": "Infra Team",
+      "type": "team",
+      "risk_score": 0
+    },
+    {
+      "id": "payment-api",
+      "label": "Payment Api",
+      "type": "service",
+      "risk_score": 50,
+      "latest_incident": "Database Failure",
+      "incidents": [
+        {
+          "title": "Database Failure",
+          "severity": "HIGH"
+        }
+      ]
+    },
+    {
+      "id": "inventory-service",
+      "label": "Inventory Service",
+      "type": "service",
+      "risk_score": 250,
+      "latest_incident": "Inventory Failure",
+      "incidents": [
+        {
+          "title": "Inventory Failure",
+          "severity": "HIGH"
+        },
+        {
+          "title": "Inventory Failure",
+          "severity": "HIGH"
+        },
+        {
+          "title": "Inventory Failure",
+          "severity": "HIGH"
+        },
+        {
+          "title": "Inventory Failure",
+          "severity": "HIGH"
+        },
+        {
+          "title": "Inventory Failure",
+          "severity": "HIGH"
+        }
+      ]
+    },
+    {
+      "id": "notification-service",
+      "label": "Notification Service",
+      "type": "service",
+      "risk_score": 150,
+      "latest_incident": null,
+      "incidents": []
+    },
+    {
+      "id": "project-phoenix",
+      "label": "Project Phoenix",
+      "type": "project",
+      "risk_score": 0
+    },
+    {
+      "id": "email-gateway",
+      "label": "Email Gateway",
+      "type": "service",
+      "risk_score": 90,
+      "latest_incident": null,
+      "incidents": []
+    },
+    {
+      "id": "platform-team",
+      "label": "Platform Team",
+      "type": "team",
+      "risk_score": 0
+    }
+  ],
+  "edges": [
+    {
+      "source": "project-atlas",
+      "target": "auth-service",
+      "label": "depends_on"
+    },
+    {
+      "source": "auth-service",
+      "target": "infra-team",
+      "label": "owned_by"
+    },
+    {
+      "source": "auth-service",
+      "target": "payment-api",
+      "label": "depends_on"
+    },
+    {
+      "source": "project-atlas",
+      "target": "inventory-service",
+      "label": "depends_on"
+    },
+    {
+      "source": "inventory-service",
+      "target": "infra-team",
+      "label": "owned_by"
+    },
+    {
+      "source": "inventory-service",
+      "target": "payment-api",
+      "label": "depends_on"
+    },
+    {
+      "source": "project-phoenix",
+      "target": "notification-service",
+      "label": "depends_on"
+    },
+    {
+      "source": "project-phoenix",
+      "target": "email-gateway",
+      "label": "depends_on"
+    },
+    {
+      "source": "email-gateway",
+      "target": "platform-team",
+      "label": "owned_by"
+    },
+    {
+      "source": "email-gateway",
+      "target": "payment-api",
+      "label": "depends_on"
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "members": [
+    {
+      "id": "debojit",
+      "name": "Debojit Bhattacharjee",
+      "team": "infra-team",
+      "skills": ["Python", "Spring Boot", "Docker", "AWS", "React"],
+      "role": "Lead Developer"
+    },
+    {
+      "id": "rahul",
+      "name": "Rahul Sharma",
+      "team": "infra-team",
+      "skills": ["Java", "Spring Boot", "Kubernetes", "PostgreSQL"],
+      "role": "Backend Developer"
+    },
+    {
+      "id": "priya",
+      "name": "Priya Patel",
+      "team": "infra-team",
+      "skills": ["Python", "Machine Learning", "FastAPI", "MongoDB"],
+      "role": "ML Engineer"
+    },
+    {
+      "id": "ankit",
+      "name": "Ankit Gupta",
+      "team": "infra-team",
+      "skills": ["React", "Next.js", "TypeScript", "Node.js"],
+      "role": "Frontend Developer"
+    },
+    {
+      "id": "sneha",
+      "name": "Sneha Iyer",
+      "team": "infra-team",
+      "skills": ["Terraform", "AWS", "Ansible", "CI/CD", "Docker"],
+      "role": "DevOps Engineer"
+    },
+    {
+      "id": "vikram",
+      "name": "Vikram Reddy",
+      "team": "infra-team",
+      "skills": ["Go", "Kafka", "Redis", "gRPC", "Kubernetes"],
+      "role": "Platform Engineer"
+    },
+    {
+      "id": "meera",
+      "name": "Meera Krishnan",
+      "team": "infra-team",
+      "skills": ["Python", "TensorFlow", "NLP", "Azure", "Data Engineering"],
+      "role": "Data Scientist"
+    },
+    {
+      "id": "arjun",
+      "name": "Arjun Deshmukh",
+      "team": "infra-team",
+      "skills": ["Java", "Spring Boot", "Microservices", "Oracle", "REST API"],
+      "role": "Senior Backend Developer"
+    },
+    {
+      "id": "kavitha",
+      "name": "Kavitha Nair",
+      "team": "infra-team",
+      "skills": ["Angular", "TypeScript", "GraphQL", "Figma", "CSS"],
+      "role": "UI/UX Developer"
+    },
+    {
+      "id": "saurabh",
+      "name": "Saurabh Joshi",
+      "team": "infra-team",
+      "skills": ["Python", "Selenium", "JMeter", "CI/CD", "Postman"],
+      "role": "QA Automation Engineer"
+    },
+    {
+      "id": "divya",
+      "name": "Divya Menon",
+      "team": "infra-team",
+      "skills": ["PostgreSQL", "MySQL", "MongoDB", "Redis", "Data Modeling"],
+      "role": "Database Administrator"
+    }
+  ]
+}
