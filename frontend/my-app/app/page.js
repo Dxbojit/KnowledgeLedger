@@ -40,6 +40,8 @@ export default function Home() {
 
   const chatEndRef = useRef(null);
   const chatInputRef = useRef(null);
+  // Stable session ID for ICA conversation continuity
+  const sessionIdRef = useRef(typeof crypto !== "undefined" ? crypto.randomUUID() : "session-" + Date.now());
 
   // ─── Load Graph ───────────────────────────────────────────
   const loadGraph = useCallback(() => {
@@ -177,7 +179,10 @@ export default function Home() {
       const res = await fetch(`${API}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({
+          message,
+          session_id: sessionIdRef.current,
+        }),
       });
       const data = await res.json();
       setChatMessages((prev) => [
@@ -364,24 +369,26 @@ export default function Home() {
                     <div className="typing-dot" />
                   </div>
                 )}
+
+                {/* Suggested Questions at the bottom of the conversation */}
+                {!isChatLoading && (
+                  <div className="suggested-questions animate-fade-in">
+                    <div className="label">Try asking</div>
+                    <div className="suggestion-chips-container">
+                      {SUGGESTED_QUESTIONS.map((q, i) => (
+                        <button
+                          key={i}
+                          className="suggestion-chip"
+                          onClick={() => sendChatMessage(q)}
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div ref={chatEndRef} />
               </div>
-
-              {/* Suggested Questions */}
-              {!isChatLoading && (
-                <div className="suggested-questions">
-                  <div className="label">Try asking</div>
-                  {SUGGESTED_QUESTIONS.map((q, i) => (
-                    <button
-                      key={i}
-                      className="suggestion-chip"
-                      onClick={() => sendChatMessage(q)}
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              )}
 
               {/* Input */}
               <div className="chat-input-area">

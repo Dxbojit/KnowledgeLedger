@@ -1,7 +1,9 @@
+import os
 import requests
 import json
+from dotenv import load_dotenv
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+load_dotenv(override=True)
 
 def generate_ai_explanation(project_name, dependencies , issues):
     prompt = f"""
@@ -31,7 +33,7 @@ def generate_ai_explanation(project_name, dependencies , issues):
     Limit response to 40-60 words.
     """
 
-    return _call_ollama(prompt)
+    return _call_gemini(prompt)
 
 
 def generate_chat_response(user_message, intent, context):
@@ -71,31 +73,45 @@ TASK:
 {instruction}
 """
 
-    return _call_ollama(prompt)
+    return _call_gemini(prompt)
 
 
-def _call_ollama(prompt):
-    """Shared Ollama call with error handling."""
-    try:
-        response = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": "qwen2.5:1.5b",
-                "prompt": prompt,
-                "stream": False
-            },
-            timeout=120
+def _call_gemini(prompt):
+    """Shared Gemini call with error handling and fallback instruction."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key or api_key == "your_free_gemini_api_key_here":
+        return (
+            "⚠️ AI Analysis unavailable.\n\n"
+            "Please configure your free **GEMINI_API_KEY** in the backend/.env file to enable instant AI reports.\n"
+            "You can obtain a key for free in 30 seconds from Google AI Studio (https://aistudio.google.com/)."
         )
 
-        data = response.json()
-        return data.get("response", "AI could not generate a response.")
-    except requests.exceptions.ConnectionError:
-        print("Ollama is not running or not reachable.")
-        return "AI Analysis unavailable — Ollama is not running."
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        if response.status_code == 200:
+            data = response.json()
+            if "candidates" in data and len(data["candidates"]) > 0:
+                parts = data["candidates"][0]["content"]["parts"]
+                if len(parts) > 0:
+                    return parts[0]["text"].strip()
+            return "AI generated an empty response."
+        else:
+            print(f"Gemini API Error: Status {response.status_code}")
+            print(f"Response: {response.text}")
+            return f"AI Analysis failed (Status {response.status_code}). Please verify your Gemini API key."
     except requests.exceptions.Timeout:
-        print("Ollama request timed out.")
-        return "AI Analysis timed out. Try again."
+        print("Gemini request timed out.")
+        return "AI Request timed out. Please try again."
     except Exception as e:
-        print(f"AI engine error: {e}")
+        print(f"Gemini engine error: {e}")
         return f"AI Analysis failed: {str(e)}"
+
 

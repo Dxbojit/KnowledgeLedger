@@ -1,5 +1,5 @@
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +20,7 @@ import re
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: Optional[str] = None
 
 class TeamMemberRequest(BaseModel):
     id: str
@@ -29,9 +30,7 @@ class TeamMemberRequest(BaseModel):
     role: Optional[str] = "Developer"
 
 app = FastAPI()
-synced_ticket_ids = set()       # tickets we've processed as active
-resolved_ticket_ids = set()     # tickets we've already resolved
-ticket_risk_map = {}            # ticket_id -> {service_id, risk_score, title}
+# No in-memory ticket state — graph is rebuilt fresh from Jira on every sync
 
 app.add_middleware(
     CORSMiddleware,
@@ -126,17 +125,6 @@ def ai_analysis(node_id: str):
         "analysis":explanation
     }
 
-def _ensure_node(node_id, node_type, existing_ids):
-    """Create a node if it doesn't already exist in graph_data."""
-    if node_id not in existing_ids:
-        graph_data["nodes"].append({
-            "id": node_id,
-            "label": node_id.replace("-", " ").title(),
-            "type": node_type,
-            "risk_score": 0
-        })
-        existing_ids.add(node_id)
-
 
 def _parse_description_fallback(text):
     """Regex-based fallback for parsing Jira descriptions that aren't valid YAML."""
@@ -178,255 +166,118 @@ def _parse_description_fallback(text):
 
 @app.post("/sync-incidents")
 def sync_incidents():
+    """Rebuild the graph entirely from live Jira data on every call.
+    No in-memory state. No JSON accumulation. The graph is always a
+    pure reflection of what Jira currently contains.
+    """
     jira_issues = fetch_jira_issues()
 
-    severity_map = {
-        "HIGH": 50,
-        "MEDIUM": 30,
-        "LOW": 15
-    }
+    severity_map = {"HIGH": 50, "MEDIUM": 30, "LOW": 15}
 
-    existing_ids = {node["id"] for node in graph_data["nodes"]}
+    # ── Fresh graph accumulators ─────────────────────────────────
+    new_nodes: dict = {}   # node_id -> node dict
+    seen_edges: set = set()  # (source, target, label) for dedup
+    new_edges: list = []
 
-    # ── Detect DELETED tickets (were synced before, now gone from Jira) ─────
-    current_jira_ids = {i["ticket_id"] for i in jira_issues}
-    deleted_ticket_ids = (
-        synced_ticket_ids - current_jira_ids - resolved_ticket_ids
-    )
-
-    for deleted_id in deleted_ticket_ids:
-        stored = ticket_risk_map.get(deleted_id)
-        if stored:
-            # Reverse risk + remove incident from service node
-            node = next((n for n in graph_data["nodes"] if n["id"] == stored["service_id"]), None)
-            if node:
-                node["risk_score"] = max(0, node["risk_score"] - stored["risk_score"])
-                node["incidents"] = [
-                    i for i in node.get("incidents", [])
-                    if i["title"] != stored["title"]
-                ]
-                remaining = node.get("incidents", [])
-                node["latest_incident"] = remaining[-1]["title"] if remaining else None
-
-            # Remove nodes this ticket created (only if no other active ticket references them)
-            other_service_ids = {
-                v["service_id"] for k, v in ticket_risk_map.items()
-                if k != deleted_id and k in synced_ticket_ids and k not in resolved_ticket_ids
+    def ensure_node(node_id: str, node_type: str) -> dict:
+        if node_id not in new_nodes:
+            new_nodes[node_id] = {
+                "id": node_id,
+                "label": node_id.replace("-", " ").title(),
+                "type": node_type,
+                "risk_score": 0,
+                "incidents": [],
+                "latest_incident": None,
             }
-            for node_id in stored.get("created_node_ids", []):
-                if node_id not in other_service_ids:
-                    graph_data["nodes"] = [n for n in graph_data["nodes"] if n["id"] != node_id]
-                    graph_data["edges"] = [
-                        e for e in graph_data["edges"]
-                        if e["source"] != node_id and e["target"] != node_id
-                    ]
-                    existing_ids.discard(node_id)
-                    print(f"DELETED node: {node_id} (ticket {deleted_id} removed)")
+        return new_nodes[node_id]
 
-            # Remove edges this ticket explicitly created
-            for edge in stored.get("created_edges", []):
-                graph_data["edges"] = [
-                    e for e in graph_data["edges"]
-                    if not (e["source"] == edge["source"] and e["target"] == edge["target"] and e["label"] == edge["label"])
-                ]
-                print(f"DELETED edge: {edge['source']} -> {edge['target']} (ticket {deleted_id} removed)")
+    def add_edge(source: str, target: str, label: str):
+        key = (source, target, label)
+        if key not in seen_edges:
+            seen_edges.add(key)
+            new_edges.append({"source": source, "target": target, "label": label})
 
-        synced_ticket_ids.discard(deleted_id)
-        ticket_risk_map.pop(deleted_id, None)
-        print(f"DELETED ticket {deleted_id} — reverted its graph contributions")
-
+    active_count = 0
+    resolved_count = 0
 
     for incident in jira_issues:
         ticket_id = incident["ticket_id"]
         is_done = incident.get("is_done", False)
 
-        # ── Ticket RESOLVED: reverse its risk contribution ──────
-        if is_done and ticket_id in synced_ticket_ids and ticket_id not in resolved_ticket_ids:
-            resolved_ticket_ids.add(ticket_id)
-            stored = ticket_risk_map.get(ticket_id)
-            if stored:
-                node = next((n for n in graph_data["nodes"] if n["id"] == stored["service_id"]), None)
-                if node:
-                    node["risk_score"] = max(0, node["risk_score"] - stored["risk_score"])
-                    # Remove this incident from the incidents list
-                    node["incidents"] = [
-                        i for i in node.get("incidents", [])
-                        if i["title"] != stored["title"]
-                    ]
-                    # Update latest_incident to the next most recent one
-                    remaining = node.get("incidents", [])
-                    node["latest_incident"] = remaining[-1]["title"] if remaining else None
-                    print(f"RESOLVED: {ticket_id} — risk -{stored['risk_score']} on {stored['service_id']}")
-            continue
-
-        # ── Skip already-processed active tickets ───────────────
-        if ticket_id in synced_ticket_ids or ticket_id in resolved_ticket_ids:
-            continue
-        synced_ticket_ids.add(ticket_id)
-
-        service_id = incident["service"]
-        parsed_description={}
+        # 1. Parse description first
         raw_desc = incident["description"].strip()
-        print("RAW DESCRIPTION:")
-        print(raw_desc)
+        print(f"[{ticket_id}] RAW DESCRIPTION:\n{raw_desc}")
 
-        # Try YAML first
+        parsed_description: dict = {}
         try:
             parsed_description = yaml.safe_load(raw_desc) or {}
         except Exception:
             pass
-
-        # Fallback: regex-based parsing for loose formatting
         if not isinstance(parsed_description, dict) or not parsed_description:
             parsed_description = _parse_description_fallback(raw_desc)
-            print("Used fallback parser:", parsed_description)
+            print(f"[{ticket_id}] Used fallback parser:", parsed_description)
 
-
-        risk_score = severity_map.get(
-            incident["severity"],
-            10
-        )
-
-        # Ensure the service node exists
-        _ensure_node(service_id, "service", existing_ids)
-
-        existing_node = next(
-            (
-                node for node in graph_data["nodes"]
-                if node["id"] == service_id
-            ),
-            None
-        )
-        
-        # Safety check - this should never be None after _ensure_node, but be defensive
-        if not existing_node:
-            print(f"ERROR: Node {service_id} not found after _ensure_node call")
+        # 2. Determine service ID (Jira Label first, then description "service")
+        service_id = incident["service"] or parsed_description.get("service")
+        if not service_id:
+            print(f"[{ticket_id}] SKIPPING ticket — no service label or description service provided")
             continue
-            
-        existing_node["risk_score"] += risk_score
-        existing_node["latest_incident"] = incident["title"]
 
-        # Track contribution — including which nodes this ticket created
-        created_nodes = [nid for nid in [service_id] if nid not in existing_ids]
-        ticket_risk_map[ticket_id] = {
-            "service_id": service_id,
-            "risk_score": risk_score,
-            "title": incident["title"],
-            "created_node_ids": created_nodes,
-            "created_edges": [],
-        }
-        
-        if "incidents" not in existing_node:
-            existing_node["incidents"]=[]  # type: ignore
+        # Always create the service node — it represents real infrastructure
+        node = ensure_node(service_id, "service")
 
-        # Check if this incident already exists to prevent duplicates
-        incident_exists = any(
-            inc["title"] == incident["title"] and inc["severity"] == incident["severity"]
-            for inc in existing_node["incidents"]
-        )
-        
-        if not incident_exists:
-            existing_node["incidents"].append({  # type: ignore
-                "title":incident["title"],
-                "severity":incident["severity"]
-            })
+        if is_done:
+            # Done tickets: infrastructure nodes exist but carry 0 risk
+            resolved_count += 1
+            print(f"[{ticket_id}] RESOLVED — node created with no risk contribution")
         else:
-            print(f"SKIPPED duplicate incident: {incident['title']} on {service_id}")
+            # Active tickets: add risk + incident
+            active_count += 1
+            risk_score = severity_map.get(incident["severity"], 10)
+            node["risk_score"] += risk_score
 
-        project_id = parsed_description.get("project") if isinstance(parsed_description, dict) else None
+            already_recorded = any(
+                i["title"] == incident["title"] and i["severity"] == incident["severity"]
+                for i in node["incidents"]
+            )
+            if not already_recorded:
+                node["incidents"].append({
+                    "title": incident["title"],
+                    "severity": incident["severity"],
+                })
+            node["latest_incident"] = node["incidents"][-1]["title"] if node["incidents"] else None
+            print(f"[{ticket_id}] ACTIVE — risk +{risk_score} on '{service_id}'")
 
+        # ── Build graph structure from parsed description ────────
+        project_id = parsed_description.get("project")
         if project_id:
-            # Create the project node if it doesn't exist
-            _ensure_node(project_id, "project", existing_ids)
+            ensure_node(project_id, "project")
+            add_edge(project_id, service_id, "depends_on")
+            print(f"[{ticket_id}] EDGE: {project_id} -> {service_id} (depends_on)")
 
-            existing_edge = next(
-                (
-                    edge for edge in graph_data["edges"]
-                    if edge["source"]==project_id
-                    and edge["target"]==service_id
-                ),
-                None
-            )
-            if not existing_edge:
-                print(
-                    "ADDING PROJECT EDGE:",
-                    project_id,
-                    "->",
-                    service_id
-                )
-                new_edge = {
-                    "source": project_id,
-                    "target": service_id,
-                    "label": "depends_on"
-                }
-                graph_data["edges"].append(new_edge)
-                ticket_risk_map[ticket_id]["created_edges"].append(new_edge)
-
-        # Handle owner_team from YAML description
-        owner_team = parsed_description.get("owner_team") if isinstance(parsed_description, dict) else None
+        owner_team = parsed_description.get("owner_team")
         if owner_team:
-            _ensure_node(owner_team, "team", existing_ids)
+            ensure_node(owner_team, "team")
+            add_edge(service_id, owner_team, "owned_by")
+            print(f"[{ticket_id}] EDGE: {service_id} -> {owner_team} (owned_by)")
 
-            existing_edge = next(
-                (
-                    edge for edge in graph_data["edges"]
-                    if edge["source"]==service_id
-                    and edge["target"]==owner_team
-                ),
-                None
-            )
-            if not existing_edge:
-                print(
-                    "ADDING TEAM EDGE:",
-                    service_id,
-                    "->",
-                    owner_team
-                )
-                new_edge = {
-                    "source": service_id,
-                    "target": owner_team,
-                    "label": "owned_by"
-                }
-                graph_data["edges"].append(new_edge)
-                ticket_risk_map[ticket_id]["created_edges"].append(new_edge)
+        dependencies = parsed_description.get("depends_on") or []
+        if isinstance(dependencies, str):
+            dependencies = [dependencies]
+        for dep in dependencies:
+            dep = dep.strip()
+            if dep:
+                ensure_node(dep, "service")
+                add_edge(service_id, dep, "depends_on")
+                print(f"[{ticket_id}] EDGE: {service_id} -> {dep} (depends_on)")
 
-        dependencies = (
-            parsed_description.get("depends_on") or []
-        ) if isinstance(parsed_description, dict) else []
-
-        for dependency in dependencies:
-            # Ensure dependency node exists
-            _ensure_node(dependency, "service", existing_ids)
-
-            existing_edge = next(
-                (
-                    edge for edge in graph_data["edges"]
-                    if edge["source"]==service_id
-                    and edge["target"]==dependency
-                ),
-                None
-            )
-            if not existing_edge:
-                print(
-                    "ADDING DEPENDENCY EDGE:",
-                    service_id,
-                    "->",
-                    dependency
-                )
-                new_edge = {
-                    "source": service_id,
-                    "target": dependency,
-                    "label": "depends_on"
-                }
-                graph_data["edges"].append(new_edge)
-                ticket_risk_map[ticket_id]["created_edges"].append(new_edge)
-        print("FINAL EDGES:")
-        print(graph_data["edges"])
-
+    # ── Replace graph entirely ───────────────────────────────────
+    graph_data["nodes"] = list(new_nodes.values())
+    graph_data["edges"] = new_edges
     save_graph_data()
 
-    resolved_count = len(resolved_ticket_ids)
-    active_count = len(synced_ticket_ids) - resolved_count
+    print(f"SYNC COMPLETE: {active_count} active, {resolved_count} resolved")
+    print(f"Graph: {len(graph_data['nodes'])} nodes, {len(graph_data['edges'])} edges")
 
     return {
         "message": "Jira incidents synced successfully",
@@ -439,7 +290,7 @@ def sync_incidents():
 
 @app.post("/chat")
 def chat(request: ChatRequest):
-    result = process_chat_message(request.message)
+    result = process_chat_message(request.message, request.session_id)
     return result
 
 
@@ -475,3 +326,20 @@ def add_team_member(member: TeamMemberRequest):
 @app.get("/summary")
 def get_summary():
     return get_executive_summary()
+
+
+# ─── Skills Search Endpoint ────────────────────────────────────
+
+@app.get("/teams/skills/{skill}")
+def get_members_by_skill(skill: str):
+    """Fetch team members who have a specific skill."""
+    matching_members = [
+        member for member in team_data["members"]
+        if any(s.lower() == skill.lower() for s in member.get("skills", []))
+    ]
+    
+    return {
+        "skill": skill,
+        "count": len(matching_members),
+        "members": matching_members
+    }

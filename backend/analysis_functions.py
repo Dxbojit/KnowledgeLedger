@@ -5,13 +5,14 @@ Each function reads graph_data and/or team_data to answer specific question type
 
 from graph_data import graph_data
 from team_data import team_data
+from risk_engine import propagate_risk
 
 
 # ─── 1. Risk Analysis ─────────────────────────────────────────────
 
 def get_high_risk_projects(threshold=50):
     """Find all projects at or above a risk threshold."""
-    nodes = graph_data["nodes"]
+    nodes = propagate_risk()
     edges = graph_data["edges"]
 
     high_risk = []
@@ -55,7 +56,7 @@ def get_high_risk_projects(threshold=50):
 
 def get_impact_analysis(node_id):
     """If node X fails, what is affected? (Reverse traversal — who depends on X)"""
-    nodes = graph_data["nodes"]
+    nodes = propagate_risk()
     edges = graph_data["edges"]
 
     target_node = next((n for n in nodes if n["id"] == node_id), None)
@@ -100,7 +101,7 @@ def get_impact_analysis(node_id):
 
 def get_root_cause(node_id):
     """What is causing node X to have issues? (Forward DFS along dependencies)"""
-    nodes = graph_data["nodes"]
+    nodes = propagate_risk()
     edges = graph_data["edges"]
 
     target_node = next((n for n in nodes if n["id"] == node_id), None)
@@ -190,7 +191,7 @@ def find_skilled_members(skills_needed):
 
 def get_risk_mitigation_context(node_id):
     """Gather context for AI-powered risk mitigation suggestions."""
-    nodes = graph_data["nodes"]
+    nodes = propagate_risk()
     edges = graph_data["edges"]
     members = team_data.get("members", [])
 
@@ -231,7 +232,7 @@ def get_risk_mitigation_context(node_id):
 
 def get_executive_summary():
     """Generate an overall summary of the system status."""
-    nodes = graph_data["nodes"]
+    nodes = propagate_risk()
     edges = graph_data["edges"]
     members = team_data.get("members", [])
 

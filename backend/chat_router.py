@@ -1,9 +1,8 @@
 """
 Chat router — detects user intent via keyword matching,
-runs the appropriate analysis function, and sends context to Ollama.
+runs the appropriate analysis function, and sends context to Gemini.
 """
 
-import json
 import re
 from graph_data import graph_data
 from analysis_functions import (
@@ -165,10 +164,11 @@ def route_question(message):
     return "general", context
 
 
-def process_chat_message(message):
+def process_chat_message(message, session_id=None):
     """
     Main entry point for chat. Routes the question, builds context,
-    and sends to Ollama for a natural language response.
+    and sends to Gemini for a natural language response.
+    Skills queries use the local team_data JSON as context.
     """
     intent, context = route_question(message)
 
@@ -182,7 +182,7 @@ def process_chat_message(message):
             "needs_clarification": True
         }
 
-    # Build the AI response
+    # All intents — including skills_search — go through Gemini with local context
     ai_reply = generate_chat_response(message, intent, context)
 
     return {

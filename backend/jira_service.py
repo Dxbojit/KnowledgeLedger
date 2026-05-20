@@ -3,7 +3,7 @@ import requests
 from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "https://aimanagementsystem.atlassian.net")
 EMAIL = os.getenv("EMAIL")
@@ -82,7 +82,7 @@ def fetch_jira_issues():
                 fields["labels"][0]
                 if fields.get("labels")
                 and len(fields["labels"]) > 0
-                else "payment-api"
+                else None
             ),
             "status": fields.get("status", {}).get("name", "Unknown"),
             "is_done": fields.get("status", {}).get("statusCategory", {}).get("key", "") == "done"
