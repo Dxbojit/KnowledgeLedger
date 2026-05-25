@@ -204,8 +204,3 @@ Once both servers are running:
 >   - dependency-service-2
 > ```
 
----
-
-## 📄 License
-
-This project was built as part of a hackathon submission. See [HACKATHON_PROJECT_REVIEW.md](./HACKATHON_PROJECT_REVIEW.md) for the full project review and design decisions.
