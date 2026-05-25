@@ -1,9 +1,12 @@
 import os
+import logging
 import requests
 from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
+
+logger = logging.getLogger(__name__)
 
 JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "https://aimanagementsystem.atlassian.net")
 EMAIL = os.getenv("EMAIL")
@@ -27,15 +30,14 @@ def fetch_jira_issues():
 
     # Check if request was successful
     if response.status_code != 200:
-        print(f"JIRA API Error: Status {response.status_code}")
-        print(f"Response: {response.text}")
+        logger.error("Jira API Error: Status %d — %s", response.status_code, response.text)
         return []
 
     data = response.json()
 
     # Check if 'issues' key exists in response
     if "issues" not in data:
-        print(f"JIRA API Response missing 'issues' key: {data}")
+        logger.error("Jira API Response missing 'issues' key: %s", data)
         return []
 
     issues = []
@@ -47,23 +49,49 @@ def fetch_jira_issues():
         description_data = fields.get("description")
 
         if description_data:
-
             try:
+                def _extract_text(node: dict) -> str:
+                    """Recursively walk an Atlassian Document Format node tree
+                    and collect all text leaves, preserving line breaks.
 
-                for block in description_data.get("content", []):
+                    Key ADF node types:
+                      doc → paragraph* / bulletList / orderedList
+                      bulletList → listItem+ → paragraph → text
+                      hardBreak  → void element (no children), represents Shift+Enter
 
-                    for item in block.get("content", []):
+                    The hardBreak MUST be handled first because it has no content
+                    children — the old 'if joined:' guard was silently returning ""
+                    for it, smashing adjacent lines like "project-bara" and
+                    "service: bara-service" into "project-baraservice: bara-service".
+                    """
+                    node_type = node.get("type")
 
-                        description_text += (
-                            item.get("text", "") + "\n"
-                        )
+                    # ── Void nodes ──────────────────────────────────────────
+                    if node_type == "hardBreak":
+                        return "\n"          # Shift+Enter in Jira editor
+                    if node_type == "text":
+                        return node.get("text", "")
+
+                    # ── Container nodes ─────────────────────────────────────
+                    parts = []
+                    for child in node.get("content", []):
+                        child_text = _extract_text(child)
+                        if child_text:
+                            parts.append(child_text)
+
+                    # Append a newline after every block-level container so
+                    # YAML field lines stay properly separated.
+                    block_types = {"paragraph", "listItem", "bulletList",
+                                   "orderedList", "heading", "blockquote", "codeBlock"}
+                    joined = "".join(parts)
+                    if node_type in block_types and joined:
+                        return joined + "\n"
+                    return joined
+
+                description_text = _extract_text(description_data).strip()
 
             except Exception as e:
-
-                print(
-                    "Description parse failed:",
-                    e
-                )
+                logger.warning("Description parse failed: %s", e)
 
         issues.append({
             "ticket_id": issue["key"],
@@ -87,5 +115,5 @@ def fetch_jira_issues():
             "status": fields.get("status", {}).get("name", "Unknown"),
             "is_done": fields.get("status", {}).get("statusCategory", {}).get("key", "") == "done"
         })
-    print("PARSED ISSUES:", issues)
+    logger.debug("Parsed %d issues from Jira", len(issues))
     return issues

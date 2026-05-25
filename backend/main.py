@@ -1,5 +1,10 @@
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv(override=True)
+load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=True)
+
+import logging
+import yaml
+import re
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,8 +17,9 @@ from jira_service import fetch_jira_issues
 from chat_router import process_chat_message
 from team_data import team_data, save_team_data
 from analysis_functions import get_executive_summary
-import yaml
-import re
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 # ─── Request Models ────────────────────────────────────────────
@@ -126,42 +132,78 @@ def ai_analysis(node_id: str):
     }
 
 
+# ─── Slug Extractor ───────────────────────────────────────────────────────────
+# All node IDs use kebab-case: project-atlas, auth-service, infra-team.
+# A slug is one-or-more lowercase alphanumeric words joined by hyphens.
+_SLUG_RE = re.compile(r'\b([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\b', re.IGNORECASE)
+
+def _extract_slug(raw) -> str:
+    """Return the first kebab-case identifier found in `raw`.
+
+    Jira descriptions often contain trailing prose on the same line as the
+    field value, e.g.  'project: project-atlas Some Description Here'.
+    The user's rule: all node IDs are in x-name format (words connected by
+    hyphens). So we scan the raw value for the first hyphenated slug token
+    and return it, discarding everything else.
+
+    If the value has no hyphen (single-word ids like 'atlas'), we fall back
+    to returning the first non-empty whitespace-separated token lowercased.
+    """
+    if not raw:
+        return ""
+    raw = str(raw).strip().strip('"').strip("'")
+
+    # Prefer first token that contains at least one hyphen
+    for token in raw.split():
+        token = token.strip('.,;:"\'')
+        if re.match(r'^[a-z][a-z0-9]*(-[a-z0-9]+)+$', token, re.IGNORECASE):
+            return token.lower()
+
+    # Fallback: first non-empty word, lowercased
+    tokens = raw.split()
+    return tokens[0].lower().strip('.,;:"\'') if tokens else ""
+
+
 def _parse_description_fallback(text):
-    """Regex-based fallback for parsing Jira descriptions that aren't valid YAML."""
+    """Regex-based fallback for parsing Jira descriptions that aren't valid YAML.
+    All extracted values are normalised through _extract_slug() so that trailing
+    prose (e.g. 'project-atlas description of project') is stripped cleanly.
+    """
     result = {}
 
     # Extract single-value fields: project, service, owner_team
     for field in ["project", "service", "owner_team"]:
-        match = re.search(rf'{field}\s*:\s*(.+)', text, re.IGNORECASE)
+        match = re.search(rf'{field}\s*[:\s]\s*(.+)', text, re.IGNORECASE)
         if match:
-            value = match.group(1).strip().strip('"').strip("'")
-            if value:
-                result[field] = value
+            slug = _extract_slug(match.group(1))
+            if slug:
+                result[field] = slug
 
-    # Extract depends_on list — look for lines after "depends_on:" that start with -, *, •, or just indented text
-    depends_match = re.search(r'depends_on\s*:\s*(.*)', text, re.IGNORECASE | re.DOTALL)
+    # Extract depends_on list — lines after "depends_on:" that start with -, *, •
+    depends_match = re.search(r'depends_on\s*[:\s]\s*(.*)', text, re.IGNORECASE | re.DOTALL)
     if depends_match:
         rest = depends_match.group(1)
-        # Check if it's an inline value (e.g., "depends_on: payment-api")
         first_line = rest.split('\n')[0].strip()
         if first_line and not first_line.startswith('-') and not first_line.startswith('*'):
-            # Single inline dependency
-            result["depends_on"] = [first_line.strip('"').strip("'")]
+            # Inline single dependency: 'depends_on: payment-api'
+            slug = _extract_slug(first_line)
+            if slug:
+                result["depends_on"] = [slug]
         else:
             # Multi-line list items
             deps = re.findall(r'[\-\*•]\s*(.+)', rest)
-            # Stop collecting when we hit the next field (owner_team, etc.)
             clean_deps = []
             for dep in deps:
-                dep = dep.strip().strip('"').strip("'")
-                if ':' in dep:
+                dep = dep.strip()
+                if ':' in dep and not dep.startswith('-'):
                     break  # hit the next key like "owner_team: ..."
-                if dep:
-                    clean_deps.append(dep)
+                slug = _extract_slug(dep)
+                if slug:
+                    clean_deps.append(slug)
             if clean_deps:
                 result["depends_on"] = clean_deps
 
-    print("FALLBACK PARSED:", result)
+    logger.debug("FALLBACK PARSED: %s", result)
     return result
 
 @app.post("/sync-incidents")
@@ -206,7 +248,7 @@ def sync_incidents():
 
         # 1. Parse description first
         raw_desc = incident["description"].strip()
-        print(f"[{ticket_id}] RAW DESCRIPTION:\n{raw_desc}")
+        logger.debug("[%s] RAW DESCRIPTION:\n%s", ticket_id, raw_desc)
 
         parsed_description: dict = {}
         try:
@@ -215,12 +257,13 @@ def sync_incidents():
             pass
         if not isinstance(parsed_description, dict) or not parsed_description:
             parsed_description = _parse_description_fallback(raw_desc)
-            print(f"[{ticket_id}] Used fallback parser:", parsed_description)
+            logger.debug("[%s] Used fallback parser: %s", ticket_id, parsed_description)
 
         # 2. Determine service ID (Jira Label first, then description "service")
-        service_id = incident["service"] or parsed_description.get("service")
+        raw_service = incident["service"] or parsed_description.get("service") or ""
+        service_id = _extract_slug(raw_service)
         if not service_id:
-            print(f"[{ticket_id}] SKIPPING ticket — no service label or description service provided")
+            logger.warning("[%s] SKIPPING ticket — no service label or description service provided", ticket_id)
             continue
 
         # Always create the service node — it represents real infrastructure
@@ -229,7 +272,7 @@ def sync_incidents():
         if is_done:
             # Done tickets: infrastructure nodes exist but carry 0 risk
             resolved_count += 1
-            print(f"[{ticket_id}] RESOLVED — node created with no risk contribution")
+            logger.info("[%s] RESOLVED — node created with no risk contribution", ticket_id)
         else:
             # Active tickets: add risk + incident
             active_count += 1
@@ -246,38 +289,38 @@ def sync_incidents():
                     "severity": incident["severity"],
                 })
             node["latest_incident"] = node["incidents"][-1]["title"] if node["incidents"] else None
-            print(f"[{ticket_id}] ACTIVE — risk +{risk_score} on '{service_id}'")
+            logger.info("[%s] ACTIVE — risk +%d on '%s'", ticket_id, risk_score, service_id)
 
         # ── Build graph structure from parsed description ────────
-        project_id = parsed_description.get("project")
+        project_id = _extract_slug(parsed_description.get("project") or "")
         if project_id:
             ensure_node(project_id, "project")
             add_edge(project_id, service_id, "depends_on")
-            print(f"[{ticket_id}] EDGE: {project_id} -> {service_id} (depends_on)")
+            logger.debug("[%s] EDGE: %s -> %s (depends_on)", ticket_id, project_id, service_id)
 
-        owner_team = parsed_description.get("owner_team")
+        owner_team = _extract_slug(parsed_description.get("owner_team") or "")
         if owner_team:
             ensure_node(owner_team, "team")
             add_edge(service_id, owner_team, "owned_by")
-            print(f"[{ticket_id}] EDGE: {service_id} -> {owner_team} (owned_by)")
+            logger.debug("[%s] EDGE: %s -> %s (owned_by)", ticket_id, service_id, owner_team)
 
         dependencies = parsed_description.get("depends_on") or []
         if isinstance(dependencies, str):
             dependencies = [dependencies]
         for dep in dependencies:
-            dep = dep.strip()
-            if dep:
-                ensure_node(dep, "service")
-                add_edge(service_id, dep, "depends_on")
-                print(f"[{ticket_id}] EDGE: {service_id} -> {dep} (depends_on)")
+            dep_slug = _extract_slug(dep)
+            if dep_slug:
+                ensure_node(dep_slug, "service")
+                add_edge(service_id, dep_slug, "depends_on")
+                logger.debug("[%s] EDGE: %s -> %s (depends_on)", ticket_id, service_id, dep_slug)
 
     # ── Replace graph entirely ───────────────────────────────────
     graph_data["nodes"] = list(new_nodes.values())
     graph_data["edges"] = new_edges
     save_graph_data()
 
-    print(f"SYNC COMPLETE: {active_count} active, {resolved_count} resolved")
-    print(f"Graph: {len(graph_data['nodes'])} nodes, {len(graph_data['edges'])} edges")
+    logger.info("SYNC COMPLETE: %d active, %d resolved", active_count, resolved_count)
+    logger.info("Graph: %d nodes, %d edges", len(graph_data["nodes"]), len(graph_data["edges"]))
 
     return {
         "message": "Jira incidents synced successfully",

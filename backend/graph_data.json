@@ -1,17 +1,104 @@
 {
   "nodes": [
     {
-      "id": "login-service",
-      "label": "Login Service",
+      "id": "inventory-service",
+      "label": "Inventory Service",
       "type": "service",
       "risk_score": 50,
       "incidents": [
         {
-          "title": "Login Failed with correct credentials",
+          "title": "Inventory Product fetching Failure",
           "severity": "HIGH"
         }
       ],
-      "latest_incident": "Login Failed with correct credentials"
+      "latest_incident": "Inventory Product fetching Failure"
+    },
+    {
+      "id": "project-edge",
+      "label": "Project Edge",
+      "type": "project",
+      "risk_score": 0,
+      "incidents": [],
+      "latest_incident": null
+    },
+    {
+      "id": "frontend-team",
+      "label": "Frontend Team",
+      "type": "team",
+      "risk_score": 0,
+      "incidents": [],
+      "latest_incident": null
+    },
+    {
+      "id": "postgres-api",
+      "label": "Postgres Api",
+      "type": "service",
+      "risk_score": 0,
+      "incidents": [],
+      "latest_incident": null
+    },
+    {
+      "id": "product-access",
+      "label": "Product Access",
+      "type": "service",
+      "risk_score": 30,
+      "incidents": [
+        {
+          "title": "Rewards page is not visible",
+          "severity": "MEDIUM"
+        }
+      ],
+      "latest_incident": "Rewards page is not visible"
+    },
+    {
+      "id": "project-wba",
+      "label": "Project Wba",
+      "type": "project",
+      "risk_score": 0,
+      "incidents": [],
+      "latest_incident": null
+    },
+    {
+      "id": "rewards-summary-api",
+      "label": "Rewards Summary Api",
+      "type": "service",
+      "risk_score": 0,
+      "incidents": [],
+      "latest_incident": null
+    },
+    {
+      "id": "ui-gateway",
+      "label": "Ui Gateway",
+      "type": "service",
+      "risk_score": 30,
+      "incidents": [
+        {
+          "title": "Accounts page is not visible",
+          "severity": "MEDIUM"
+        }
+      ],
+      "latest_incident": "Accounts page is not visible"
+    },
+    {
+      "id": "summary-api",
+      "label": "Summary Api",
+      "type": "service",
+      "risk_score": 0,
+      "incidents": [],
+      "latest_incident": null
+    },
+    {
+      "id": "email-service",
+      "label": "Email Service",
+      "type": "service",
+      "risk_score": 15,
+      "incidents": [
+        {
+          "title": "Email Delivery Delays",
+          "severity": "LOW"
+        }
+      ],
+      "latest_incident": "Email Delivery Delays"
     },
     {
       "id": "project-atlas",
@@ -22,8 +109,8 @@
       "latest_incident": null
     },
     {
-      "id": "login-team",
-      "label": "Login Team",
+      "id": "phoenix-team",
+      "label": "Phoenix Team",
       "type": "team",
       "risk_score": 0,
       "incidents": [],
@@ -38,17 +125,17 @@
       "latest_incident": null
     },
     {
-      "id": "auth-service",
-      "label": "Auth Service",
+      "id": "login-service",
+      "label": "Login Service",
       "type": "service",
       "risk_score": 50,
       "incidents": [
         {
-          "title": "Payment authorisation error",
+          "title": "Login Failed with correct credentials",
           "severity": "HIGH"
         }
       ],
-      "latest_incident": "Payment authorisation error"
+      "latest_incident": "Login Failed with correct credentials"
     },
     {
       "id": "infra-team",
@@ -61,32 +148,77 @@
   ],
   "edges": [
     {
+      "source": "project-edge",
+      "target": "inventory-service",
+      "label": "depends_on"
+    },
+    {
+      "source": "inventory-service",
+      "target": "frontend-team",
+      "label": "owned_by"
+    },
+    {
+      "source": "inventory-service",
+      "target": "postgres-api",
+      "label": "depends_on"
+    },
+    {
+      "source": "project-wba",
+      "target": "product-access",
+      "label": "depends_on"
+    },
+    {
+      "source": "product-access",
+      "target": "frontend-team",
+      "label": "owned_by"
+    },
+    {
+      "source": "product-access",
+      "target": "rewards-summary-api",
+      "label": "depends_on"
+    },
+    {
+      "source": "project-wba",
+      "target": "ui-gateway",
+      "label": "depends_on"
+    },
+    {
+      "source": "ui-gateway",
+      "target": "frontend-team",
+      "label": "owned_by"
+    },
+    {
+      "source": "ui-gateway",
+      "target": "summary-api",
+      "label": "depends_on"
+    },
+    {
+      "source": "project-atlas",
+      "target": "email-service",
+      "label": "depends_on"
+    },
+    {
+      "source": "email-service",
+      "target": "phoenix-team",
+      "label": "owned_by"
+    },
+    {
+      "source": "email-service",
+      "target": "payment-api",
+      "label": "depends_on"
+    },
+    {
       "source": "project-atlas",
       "target": "login-service",
       "label": "depends_on"
     },
     {
       "source": "login-service",
-      "target": "login-team",
-      "label": "owned_by"
-    },
-    {
-      "source": "login-service",
-      "target": "payment-api",
-      "label": "depends_on"
-    },
-    {
-      "source": "project-atlas",
-      "target": "auth-service",
-      "label": "depends_on"
-    },
-    {
-      "source": "auth-service",
       "target": "infra-team",
       "label": "owned_by"
     },
     {
-      "source": "auth-service",
+      "source": "login-service",
       "target": "payment-api",
       "label": "depends_on"
     }

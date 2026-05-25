@@ -1,9 +1,16 @@
 import os
 import requests
 import json
+import time
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+# Resolve .env relative to this file so it works regardless of the
+# working directory that uvicorn / the shell is launched from.
+load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=True)
+
+# Simple in-memory cache for API responses
+_ai_cache = {}
 
 def generate_ai_explanation(project_name, dependencies , issues):
     prompt = f"""
@@ -67,7 +74,7 @@ USER QUESTION:
 DETECTED INTENT: {intent}
 
 ANALYSIS DATA:
-{json.dumps(context, indent=2)}
+{json.dumps(context, sort_keys=True, indent=2)}
 
 TASK:
 {instruction}
@@ -77,7 +84,11 @@ TASK:
 
 
 def _call_gemini(prompt):
-    """Shared Gemini call with error handling and fallback instruction."""
+    """Shared Gemini call with error handling, retry logic, and caching."""
+    cache_key = hash(prompt)
+    if cache_key in _ai_cache:
+        return _ai_cache[cache_key]
+
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key or api_key == "your_free_gemini_api_key_here":
         return (
@@ -86,32 +97,44 @@ def _call_gemini(prompt):
             "You can obtain a key for free in 30 seconds from Google AI Studio (https://aistudio.google.com/)."
         )
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
-    }
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
-        if response.status_code == 200:
-            data = response.json()
-            if "candidates" in data and len(data["candidates"]) > 0:
-                parts = data["candidates"][0]["content"]["parts"]
-                if len(parts) > 0:
-                    return parts[0]["text"].strip()
-            return "AI generated an empty response."
-        else:
-            print(f"Gemini API Error: Status {response.status_code}")
-            print(f"Response: {response.text}")
-            return f"AI Analysis failed (Status {response.status_code}). Please verify your Gemini API key."
-    except requests.exceptions.Timeout:
-        print("Gemini request timed out.")
-        return "AI Request timed out. Please try again."
-    except Exception as e:
-        print(f"Gemini engine error: {e}")
-        return f"AI Analysis failed: {str(e)}"
+    max_retries = 3
+    backoff = 2
 
-
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            
+            if response.status_code == 429:
+                print(f"[Gemini] 429 Rate Limit hit (attempt {attempt + 1}/{max_retries}).")
+                if attempt < max_retries - 1:
+                    time.sleep(backoff)
+                    backoff *= 2
+                    continue
+                # All retries exhausted — return friendly message
+                return (
+                    "⏳ **AI Rate Limit Reached**\n\n"
+                    "The Gemini API free-tier quota has been temporarily exhausted. "
+                    "Please wait a minute and try again, or check your quota at "
+                    "[Google AI Studio](https://aistudio.google.com/)."
+                )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "candidates" in data and len(data["candidates"]) > 0:
+                    parts = data["candidates"][0]["content"]["parts"]
+                    if len(parts) > 0:
+                        result = parts[0]["text"].strip()
+                        _ai_cache[cache_key] = result
+                        return result
+                return "AI generated an empty response."
+            else:
+                return f"AI Analysis failed (Status {response.status_code})."
+                
+        except Exception as e:
+            if attempt == max_retries - 1:
+                return f"AI Analysis failed: {str(e)}"
+    return "AI Analysis failed after multiple attempts."

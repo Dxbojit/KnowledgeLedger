@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import ReactFlow from "reactflow";
 import "reactflow/dist/style.css";
+import ReactMarkdown from "react-markdown";
+
 
 const API = "http://127.0.0.1:8000";
 
@@ -17,6 +19,8 @@ const SUGGESTED_QUESTIONS = [
 
 export default function Home() {
   // ─── Graph State ──────────────────────────────────────────
+  const [rawNodes, setRawNodes] = useState([]);
+  const [rawEdges, setRawEdges] = useState([]);
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -37,6 +41,7 @@ export default function Home() {
   const [toast, setToast] = useState(null);
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [showRiskLegend, setShowRiskLegend] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const chatEndRef = useRef(null);
   const chatInputRef = useRef(null);
@@ -118,7 +123,10 @@ export default function Home() {
             fullData: node,
           },
           position: layoutPositions[node.id] || { x: 0, y: 0 },
-          style: getNodeStyle(node),
+          style: {
+            ...getNodeStyle(node),
+            transition: "opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1), outline 0.25s cubic-bezier(0.4, 0, 0.2, 1), filter 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+          },
         }));
 
         const flowEdges = data.edges.map((edge, index) => ({
@@ -127,12 +135,12 @@ export default function Home() {
           target: edge.target,
           label: edge.label,
           animated: true,
-          style: { stroke: "#475569", strokeWidth: 1.5 },
-          labelStyle: { fill: "#64748b", fontSize: 10 },
+          style: { stroke: "#475569", strokeWidth: 1.5, transition: "stroke 0.25s ease, stroke-width 0.25s ease, opacity 0.25s ease" },
+          labelStyle: { fill: "#64748b", fontSize: 10, transition: "fill 0.25s ease" },
         }));
 
-        setNodes(flowNodes);
-        setEdges(flowEdges);
+        setRawNodes(flowNodes);
+        setRawEdges(flowEdges);
       });
   }, []);
 
@@ -148,6 +156,133 @@ export default function Home() {
     loadGraph();
     loadSummary();
   }, [loadGraph, loadSummary]);
+
+  // ─── Dynamic Selection Highlighting ───────────────────────
+  // Three-tier visual hierarchy:
+  //   ① SELECTED   — vivid blue neon glow (the clicked node)
+  //   ② CONNECTED  — bright indigo glow  (every node reachable in either direction)
+  //   ③ UNRELATED  — crushed to 10% opacity + grayscale
+  useEffect(() => {
+    if (!selectedNode) {
+      setNodes(rawNodes);
+      setEdges(rawEdges);
+      return;
+    }
+
+    const selectedId = selectedNode.id;
+
+    // ── Dynamic BFS Bidirectional Traversal ──
+    // Builds an adjacency map from all edges (both directions) and performs
+    // BFS from the selected node to find every connected node transitively.
+    // This works for any graph topology without any hardcoded node IDs.
+    const adjacency = {};
+    rawEdges.forEach((edge) => {
+      if (!adjacency[edge.source]) adjacency[edge.source] = [];
+      if (!adjacency[edge.target]) adjacency[edge.target] = [];
+      // Add both directions so we traverse upstream AND downstream
+      adjacency[edge.source].push(edge.target);
+      adjacency[edge.target].push(edge.source);
+    });
+
+    const connectedIds = new Set([selectedId]);
+    const queue = [selectedId];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      (adjacency[current] || []).forEach((neighbor) => {
+        if (!connectedIds.has(neighbor)) {
+          connectedIds.add(neighbor);
+          queue.push(neighbor);
+        }
+      });
+    }
+
+    // ── Node styles ──
+    const updatedNodes = rawNodes.map((node) => {
+      const isSelf      = node.id === selectedId;
+      const isConnected = !isSelf && connectedIds.has(node.id);
+
+      if (isSelf) {
+        // ① SELECTED — bright blue neon ring + strong glow
+        const base = node.style.boxShadow || "";
+        return {
+          ...node,
+          style: {
+            ...node.style,
+            opacity:   1,
+            filter:    "none",
+            outline:   "2px solid #3b82f6",
+            boxShadow: (base ? base + ", " : "") + "0 0 0 4px rgba(59,130,246,0.30), 0 0 32px rgba(59,130,246,0.85)",
+            zIndex:    1000,
+          },
+        };
+      }
+
+      if (isConnected) {
+        // ② CONNECTED — indigo glow, clearly brighter than the normal state
+        const base = node.style.boxShadow || "";
+        return {
+          ...node,
+          style: {
+            ...node.style,
+            opacity:   1,
+            filter:    "none",
+            outline:   "2px solid rgba(99,102,241,0.75)",
+            boxShadow: (base ? base + ", " : "") + "0 0 0 3px rgba(99,102,241,0.20), 0 0 20px rgba(99,102,241,0.60)",
+            zIndex:    990,
+          },
+        };
+      }
+
+      // ③ UNRELATED — recede into the background
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          opacity:       0.10,
+          filter:        "grayscale(80%) brightness(0.6)",
+          outline:       "none",
+          boxShadow:     "none",
+          pointerEvents: "none",
+          zIndex:        1,
+        },
+      };
+    });
+
+    // ── Edge styles ──
+    const updatedEdges = rawEdges.map((edge) => {
+      const touchesSelected = edge.source === selectedId || edge.target === selectedId;
+      const bothConnected   = connectedIds.has(edge.source) && connectedIds.has(edge.target);
+
+      if (touchesSelected) {
+        // Direct edges from/to selected node — vivid blue, thick
+        return {
+          ...edge,
+          animated:   true,
+          style:      { stroke: "#3b82f6", strokeWidth: 2.5, opacity: 1 },
+          labelStyle: { fill: "#93c5fd", fontSize: 10, fontWeight: 600 },
+        };
+      }
+      if (bothConnected) {
+        // Edges within the connected cluster — indigo, animated
+        return {
+          ...edge,
+          animated:   true,
+          style:      { stroke: "#6366f1", strokeWidth: 2, opacity: 0.85 },
+          labelStyle: { fill: "#a5b4fc", fontSize: 10 },
+        };
+      }
+      // Edges to unrelated nodes — almost invisible
+      return {
+        ...edge,
+        animated:   false,
+        style:      { stroke: "#1e293b", strokeWidth: 1, opacity: 0.04 },
+        labelStyle: { fill: "transparent", fontSize: 10 },
+      };
+    });
+
+    setNodes(updatedNodes);
+    setEdges(updatedEdges);
+  }, [rawNodes, rawEdges, selectedNode]);
 
   // ─── Scroll chat to bottom ────────────────────────────────
   useEffect(() => {
@@ -262,12 +397,12 @@ export default function Home() {
                   </div>
                   <div className="risk-legend-item">
                     <span className="risk-badge-dot moderate"></span>
-                    <span className="risk-legend-range">50 - 100</span>
+                    <span className="risk-legend-range">50 - 80</span>
                     <span className="risk-legend-label moderate">risk moderate</span>
                   </div>
                   <div className="risk-legend-item">
                     <span className="risk-badge-dot high"></span>
-                    <span className="risk-legend-range">&gt; 100</span>
+                    <span className="risk-legend-range">&gt; 80</span>
                     <span className="risk-legend-label high">high risk</span>
                   </div>
                 </div>
@@ -318,6 +453,9 @@ export default function Home() {
               setActiveTab("details");
               fetchAIAnalysis(node.id);
             }}
+            onPaneClick={() => {
+              setSelectedNode(null);
+            }}
             fitView
             style={{ background: "#0a0e1a" }}
           />
@@ -359,7 +497,13 @@ export default function Home() {
                     {msg.intent && (
                       <div className="intent-badge">{msg.intent.replace("_", " ")}</div>
                     )}
-                    <div>{msg.text}</div>
+                    {msg.role === "ai" ? (
+                      <div className="chat-markdown">
+                        <ReactMarkdown>{msg.text}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      <div>{msg.text}</div>
+                    )}
                   </div>
                 ))}
                 {isChatLoading && (
@@ -424,11 +568,24 @@ export default function Home() {
             <div className="node-details">
               {selectedNode ? (
                 <div className="animate-fade-in">
-                  <div className="node-header">
-                    <div className={`node-type-badge ${selectedNode.type}`}>
-                      {selectedNode.type}
+                  <div className="node-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div className={`node-type-badge ${selectedNode.type}`}>
+                        {selectedNode.type}
+                      </div>
+                      <div className="node-title">{selectedNode.label}</div>
                     </div>
-                    <div className="node-title">{selectedNode.label}</div>
+                    <button
+                      onClick={() => {
+                        setSelectedNode(null);
+                        setActiveTab("chat");
+                      }}
+                      className="btn"
+                      style={{ padding: "4px 8px", fontSize: "11px", borderRadius: "6px" }}
+                      title="Clear node selection"
+                    >
+                      ✕ Close
+                    </button>
                   </div>
 
                   {/* Risk Bar */}
@@ -544,11 +701,63 @@ export default function Home() {
             <p style={{ color: "#94a3b8", fontSize: 13 }}>
               Enter Jira ticket description in this YAML format:
             </p>
-            <pre>{`project: project-atlas
+            <div style={{ position: "relative" }}>
+              <pre style={{ margin: 0, paddingRight: "48px" }}>{`project: project-atlas
 service: auth-service
 depends_on:
   - payment-api
 owner_team: infra-team`}</pre>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(`project: project-atlas
+service: auth-service
+depends_on:
+  - payment-api
+owner_team: infra-team`);
+                  setCopied(true);
+                  showToast("success", "Copied to clipboard!", "YAML template is ready to paste in Jira");
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+                title="Copy template to clipboard"
+                style={{
+                  position: "absolute",
+                  top: "10px",
+                  right: "10px",
+                  background: copied ? "rgba(16, 185, 129, 0.15)" : "rgba(255, 255, 255, 0.06)",
+                  border: copied ? "1px solid var(--accent-emerald)" : "1px solid rgba(255, 255, 255, 0.12)",
+                  borderRadius: "var(--radius-sm)",
+                  color: copied ? "var(--accent-emerald)" : "var(--text-secondary)",
+                  width: "32px",
+                  height: "32px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  transition: "all 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+                  outline: "none",
+                  fontSize: "14px",
+                  boxShadow: copied ? "0 0 12px rgba(16, 185, 129, 0.2)" : "none",
+                }}
+                onMouseEnter={(e) => {
+                  if (!copied) {
+                    e.currentTarget.style.background = "rgba(59, 130, 246, 0.15)";
+                    e.currentTarget.style.borderColor = "var(--accent-blue)";
+                    e.currentTarget.style.color = "var(--text-primary)";
+                    e.currentTarget.style.boxShadow = "0 0 10px rgba(59, 130, 246, 0.2)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!copied) {
+                    e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)";
+                    e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.12)";
+                    e.currentTarget.style.color = "var(--text-secondary)";
+                    e.currentTarget.style.boxShadow = "none";
+                  }
+                }}
+              >
+                {copied ? "✓" : "📋"}
+              </button>
+            </div>
             <div className="modal-actions">
               <button
                 className="btn btn-primary"
